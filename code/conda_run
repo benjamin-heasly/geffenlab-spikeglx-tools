@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -ex
+
+# Run the given command in our phy2 conda environment.
+/opt/miniconda/bin/conda run --no-capture-output -n spikeglx-tools "$@"
