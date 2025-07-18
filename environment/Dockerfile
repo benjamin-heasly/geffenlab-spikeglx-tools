@@ -16,14 +16,6 @@ RUN mkdir -p /opt/conda
 RUN wget https://repo.anaconda.com/miniconda/Miniconda3-py311_24.5.0-0-Linux-x86_64.sh -O /opt/conda/miniconda.sh \
     && bash /opt/conda/miniconda.sh -b -p /opt/miniconda
 
-# Create our conda environment from environment.yml.
-COPY environment/environment.yml /opt/environment/environment.yml
-RUN /opt/miniconda/bin/conda env create -f /opt/environment/environment.yml
-
-# Include all of our code/* in /opt/code
-COPY code /opt/code
-COPY code/conda_run /usr/local/bin/conda_run
-
 # Install a specific version of TPrime.
 ENV TPRIME_VERSION=Release_1_8
 RUN git -C /opt clone --depth 1 --branch $TPRIME_VERSION https://github.com/billkarsh/TPrime.git
@@ -38,3 +30,11 @@ RUN cd /opt/CatGT/CatGT-linux && chmod +x install.sh && ./install.sh
 ENV CWAVES_VERSION=Release_2_9
 RUN git -C /opt clone --depth 1 --branch $CWAVES_VERSION https://github.com/billkarsh/C_Waves.git
 RUN cd /opt/C_Waves/C_Waves-linux && chmod +x install.sh && ./install.sh
+
+# Create our conda environment from environment.yml.
+COPY environment/environment.yml /opt/environment/environment.yml
+RUN /opt/miniconda/bin/conda env create -f /opt/environment/environment.yml
+
+# Include all of our code/* in /opt/code
+COPY code /opt/code
+COPY code/conda_run /usr/local/bin/conda_run
