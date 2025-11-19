@@ -4,7 +4,7 @@ from argparse import ArgumentParser
 from typing import Optional, Sequence, Any
 import logging
 from pathlib import Path
-from shutil import copy
+from shutil import copy2
 import subprocess
 
 import numpy as np
@@ -71,7 +71,7 @@ def phy_spike_times_to_samples(
     spike_times_in_seconds = np.load(spike_times_seconds)
     spike_times_in_samples = np.round(spike_times_in_seconds * sample_rate)
 
-    # Overwrite the original spike_times.npy with the adjusted version.
+    # Wrtie a new eg spike_times.npy with spike times in seconds.
     np.save(spike_times_samples, spike_times_in_samples.astype(np.int64))
 
 
@@ -106,20 +106,20 @@ def run_tprime(
     # Optionally convert Phy spike_times from samples to seconds so that TPrime can adjust them.
     output_path = Path(output_root).absolute()
     output_path.mkdir(parents=True, exist_ok=True)
-    probe_output_path = Path(output_path, probe_id)
     spike_times_seconds_adjusted = None
     if phy_from_stream is not None:
-        probe_output_path.mkdir(parents=True, exist_ok=True)
-
-        # Copy the original spike times, in samples, for reference.
+        # Convert the original spike times (in samples) to seconds for TPrime.
         params_py = find_one(phy_pattern, probe_id)
-        spike_times_npy = Path(params_py.parent, "spike_times.npy")
-        spike_times_copy = Path(probe_output_path, "spike_times.npy")
-        copy(spike_times_npy, spike_times_copy)
+        spike_times_original = Path(params_py.parent, "spike_times_original.npy")
+        if not spike_times_original.exists():
+            # First time through, make a copy of the original spike_times.npy, which we intend to overwrite below.
+            spike_times_npy = Path(params_py.parent, "spike_times.npy")
+            logging.info(f"Copying {spike_times_npy.name} to {spike_times_original.name} for reference.")
+            copy2(spike_times_npy, spike_times_original)
 
         # Convert original spike times from samples to seconds according to the sample rate.
-        spike_times_seconds = Path(probe_output_path, "spike_times_sec.npy")
-        phy_spike_times_to_seconds(params_py, spike_times_npy, spike_times_seconds)
+        spike_times_seconds = Path(params_py.parent, "spike_times_sec_original.npy")
+        phy_spike_times_to_seconds(params_py, spike_times_original, spike_times_seconds)
 
         # Which clock / time stream / sync events file do spike times come from?
         phy_from_path = find_one(phy_from_stream, parent=input_path)
@@ -128,7 +128,7 @@ def run_tprime(
         tprime_command.append(from_stream_arg)
 
         # Write adjusted spike times, in seconds, to the outputs dir.
-        spike_times_seconds_adjusted = Path(probe_output_path, "spike_times_sec_adj.npy")
+        spike_times_seconds_adjusted = Path(params_py.parent, "spike_times_sec_adj.npy")
         event_arg = f"-events={phy_index},{spike_times_seconds.as_posix()},{spike_times_seconds_adjusted.as_posix()}"
         tprime_command.append(event_arg)
 
@@ -156,10 +156,16 @@ def run_tprime(
             print(line)
 
     if (result.returncode == 0 and spike_times_seconds_adjusted is not None):
-        # Convert adjusted spike times from seconds to samples according to the sample rate.
+        # Write out the spike times adjusted by TPrime (in seconds) as sample numbers for Phy.
         params_py = find_one(phy_pattern, probe_id)
-        spike_times_adjusted = Path(probe_output_path, "spike_times_adj.npy")
-        phy_spike_times_to_samples(params_py, spike_times_seconds_adjusted, spike_times_adjusted)
+        spike_times_adj_npy = Path(params_py.parent, "spike_times_adj.npy")
+        phy_spike_times_to_samples(params_py, spike_times_seconds_adjusted, spike_times_adj_npy)
+
+        # Overwrite the original sample_times.npy so that Phy can find it.
+        # We should have made a copy of this above, as "spike_times_original.npy"
+        spike_times_npy = Path(params_py.parent, "spike_times.npy")
+        logging.info(f"Replacing {spike_times_npy.name} with {spike_times_adj_npy.name} so that Phy will use adjusted spike times.")
+        copy2(spike_times_adj_npy, spike_times_npy)
 
     return result.returncode
 
