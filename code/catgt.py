@@ -116,7 +116,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         logging.info(f"Found {len(subdir_names)} subdirs: {subdir_names}")
         if not subdir_names:
             raise ValueError("Input dir has no SpikeGlx run subdirectory.")
-        elif len(subdir_names > 1):
+        elif len(subdir_names) > 1:
             raise ValueError("Input dir has multiple subdirectories, but no SpikeGlx run was specified.")
         else:
             subdir_name = subdir_names[0]
