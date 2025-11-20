@@ -76,8 +76,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument(
         "--run",
         type=str,
-        help="SpikeGLX run name, for example 'AS20_03112025_trainingSingle6Tone2024_Snk3.1'.  Can omit this if INPUT_ROOT contains only one subdir, like 'AS20_03112025_trainingSingle6Tone2024_Snk3.1_g0'",
-        default=None
+        help="SpikeGLX run name with no gate suffix (eg leave of the `_g0`), for example 'AS20_03112025_trainingSingle6Tone2024_Snk3.1'.  If INPUT_ROOT/ecephys/ contains one subdir, you can use 'auto' to pick this subdir. (default: %(default)s)",
+        default='auto'
     )
     parser.add_argument(
         "--gate",
@@ -110,9 +110,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     output_path = Path(cli_args.output_root)
     output_path.mkdir(exist_ok=True, parents=True)
 
-    if cli_args.run:
-        run_name = cli_args.run
-    else:
+    if cli_args.run == 'auto':
         logging.info(f"Searching for SpikeGlx run dir within input dir {input_path}")
         subdir_names = [subdir.name for subdir in input_path.iterdir() if subdir.is_dir()]
         logging.info(f"Found {len(subdir_names)} subdirs: {subdir_names}")
@@ -125,6 +123,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             gate_suffix = f"_g{cli_args.gate}"
             logging.info(f"Using subdir name {subdir_name} as the SpikeGlx run name (minus gate suffix {gate_suffix})")
             run_name = subdir_name.removesuffix(gate_suffix)
+    else:
+        run_name = cli_args.run
     logging.info(f"Using SpikeGlx run name {run_name}")
 
     probe_index = re.search(r"\d+$", cli_args.probe_id).group()
