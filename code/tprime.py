@@ -4,7 +4,7 @@ from argparse import ArgumentParser
 from typing import Optional, Sequence, Any
 import logging
 from pathlib import Path
-from shutil import copy2
+from shutil import copy2, copytree
 import subprocess
 
 import numpy as np
@@ -163,12 +163,17 @@ def run_tprime(
 
     if (result.returncode == 0 and spike_times_seconds_adjusted is not None) and spike_times_seconds_adjusted.exists():
         # Write out the spike times adjusted by TPrime (in seconds) as sample numbers for Phy.
-        params_py = find_one(phy_pattern, probe_id)
+        params_py = find_one(phy_pattern, probe_id, parent=phy_path)
         spike_times_adj_npy = Path(spike_times_seconds_adjusted.parent, "spike_times_adj.npy")
         phy_spike_times_to_samples(params_py, spike_times_seconds_adjusted, spike_times_adj_npy)
 
-        # Make a full copy of the original phy/ dir, and replace the spike_times.npy with the adjusted version.
-        # TODO
+        # Make a full copy of the input phy/ dir, then replace its spike_times.npy with the adjusted spike_times_adj.npy.
+        logging.info(f"Copying phy/ dir from {params_py.parent} to {spike_times_seconds_adjusted.parent}")
+        copytree(params_py.parent, spike_times_seconds_adjusted.parent)
+
+        spike_times_npy = Path(params_py.parent, "spike_times.npy")
+        logging.info(f"Replacing original spike times in {spike_times_npy} with adjusted {spike_times_adj_npy}")
+        copy2(spike_times_adj_npy, spike_times_npy)
 
     return result.returncode
 
