@@ -168,8 +168,8 @@ def run_tprime(
         phy_spike_times_to_samples(params_py, spike_times_seconds_adjusted, spike_times_adj_npy)
 
         # Make a full copy of the input phy/ dir, then replace its spike_times.npy with the adjusted spike_times_adj.npy.
-        logging.info(f"Copying phy/ dir from {params_py.parent} to {spike_times_seconds_adjusted.parent}")
-        copytree(params_py.parent, spike_times_seconds_adjusted.parent)
+        logging.info(f"Copying contents of phy/ dir from {params_py.parent} to {spike_times_seconds_adjusted.parent}")
+        copytree(params_py.parent, spike_times_seconds_adjusted.parent, dirs_exist_ok=True)
 
         spike_times_npy = Path(params_py.parent, "spike_times.npy")
         logging.info(f"Replacing original spike times in {spike_times_npy} with adjusted {spike_times_adj_npy}")
