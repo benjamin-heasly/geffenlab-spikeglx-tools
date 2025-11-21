@@ -76,7 +76,8 @@ def phy_spike_times_to_samples(
 
 
 def run_tprime(
-    input_root: str,
+    catgt_root: str,
+    phy_root: str,
     output_root: str,
     to_stream: str,
     from_streams: list[tuple[str, str]],
@@ -90,8 +91,8 @@ def run_tprime(
     """Use TPrime to find and adjust event and spike times, and write adjusted times to the output root."""
 
     # Start building up TPrime command args.
-    input_path = Path(input_root).absolute()
-    to_stream_path = find_one(to_stream, parent=input_path)
+    catgt_path = Path(catgt_root).absolute()
+    to_stream_path = find_one(to_stream, parent=catgt_path)
     tprime_command = [
         runit_path,
         f"-syncperiod={sync_period}",
@@ -103,45 +104,50 @@ def run_tprime(
         offset_arg = f"-offsets={offsets_file}"
         tprime_command.append(offset_arg)
 
-    # Optionally convert Phy spike_times from samples to seconds so that TPrime can adjust them.
     output_path = Path(output_root).absolute()
     output_path.mkdir(parents=True, exist_ok=True)
+
     spike_times_seconds_adjusted = None
     if phy_from_stream is not None:
-        # Convert the original spike times (in samples) to seconds for TPrime.
-        params_py = find_one(phy_pattern, probe_id)
-        spike_times_original = Path(params_py.parent, "spike_times_original.npy")
-        if not spike_times_original.exists():
-            # First time through, make a copy of the original spike_times.npy, which we intend to overwrite below.
-            spike_times_npy = Path(params_py.parent, "spike_times.npy")
-            logging.info(f"Copying {spike_times_npy.name} to {spike_times_original.name} for reference.")
-            copy2(spike_times_npy, spike_times_original)
+        # Locate Phy inputs and choose an output path with the same structure.
+        phy_path = Path(phy_root).absolute()
+        params_py = find_one(phy_pattern, probe_id, parent=phy_path)
+        params_py_relative = params_py.relative_to(phy_path)
+        phy_output_path = Path(output_path, "phy", params_py_relative.parent)
+        logging.info(f"Writing converted spike times to {phy_output_path}")
+        phy_output_path.mkdir(exist_ok=True, parents=True)
 
-        # Convert original spike times from samples to seconds according to the sample rate.
-        spike_times_seconds = Path(params_py.parent, "spike_times_sec_original.npy")
+        # Make a copy of the original spike_times.npy for reference.
+        spike_times_npy = Path(params_py.parent, "spike_times.npy")
+        spike_times_original = Path(phy_output_path, "spike_times_original.npy")
+        logging.info(f"Copying {spike_times_npy} to {spike_times_original}.")
+        copy2(spike_times_npy, spike_times_original)
+
+        # Convert Phy's spike times, in samples, to seconds for TPrime.
+        spike_times_seconds = Path(phy_output_path, "spike_times_sec_original.npy")
         phy_spike_times_to_seconds(params_py, spike_times_original, spike_times_seconds)
 
         # Which clock / time stream / sync events file do spike times come from?
-        phy_from_path = find_one(phy_from_stream, parent=input_path)
+        phy_from_path = find_one(phy_from_stream, parent=catgt_path)
         phy_index = len(from_streams)
         from_stream_arg = f"-fromstream={phy_index},{phy_from_path.as_posix()}"
         tprime_command.append(from_stream_arg)
 
         # Write adjusted spike times, in seconds, to the outputs dir.
-        spike_times_seconds_adjusted = Path(params_py.parent, "spike_times_sec_adj.npy")
+        spike_times_seconds_adjusted = Path(phy_output_path, "spike_times_sec_adj.npy")
         event_arg = f"-events={phy_index},{spike_times_seconds.as_posix()},{spike_times_seconds_adjusted.as_posix()}"
         tprime_command.append(event_arg)
 
     for index, (from_glob, events_glob) in enumerate(from_streams):
         # Which clock / time stream / sync events file do these events come from?
-        from_path = find_one(from_glob, parent=input_path)
+        from_path = find_one(from_glob, parent=catgt_path)
         from_stream_arg = f"-fromstream={index},{from_path.as_posix()}"
         tprime_command.append(from_stream_arg)
 
         # Write adjusted events to the output_root.
-        events_paths = input_path.glob(events_glob)
+        events_paths = catgt_path.glob(events_glob)
         for events_path in events_paths:
-            events_adjusted = Path(output_path, events_path.relative_to(input_path))
+            events_adjusted = Path(output_path, events_path.relative_to(catgt_path))
             events_adjusted.parent.mkdir(parents=True, exist_ok=True)
             event_arg = f"-events={index},{events_path.as_posix()},{events_adjusted.as_posix()}"
             tprime_command.append(event_arg)
@@ -155,17 +161,14 @@ def run_tprime(
         for line in log:
             print(line)
 
-    if (result.returncode == 0 and spike_times_seconds_adjusted is not None):
+    if (result.returncode == 0 and spike_times_seconds_adjusted is not None) and spike_times_seconds_adjusted.exists():
         # Write out the spike times adjusted by TPrime (in seconds) as sample numbers for Phy.
         params_py = find_one(phy_pattern, probe_id)
-        spike_times_adj_npy = Path(params_py.parent, "spike_times_adj.npy")
+        spike_times_adj_npy = Path(spike_times_seconds_adjusted.parent, "spike_times_adj.npy")
         phy_spike_times_to_samples(params_py, spike_times_seconds_adjusted, spike_times_adj_npy)
 
-        # Overwrite the original sample_times.npy so that Phy can find it.
-        # We should have made a copy of this above, as "spike_times_original.npy"
-        spike_times_npy = Path(params_py.parent, "spike_times.npy")
-        logging.info(f"Replacing {spike_times_npy.name} with {spike_times_adj_npy.name} so that Phy will use adjusted spike times.")
-        copy2(spike_times_adj_npy, spike_times_npy)
+        # Make a full copy of the original phy/ dir, and replace the spike_times.npy with the adjusted version.
+        # TODO
 
     return result.returncode
 
@@ -180,14 +183,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     parser = ArgumentParser(description="Use TPrime to align event and spike times to a common clock / time stream.")
     parser.add_argument(
-        "input_root",
+        "catgt_root",
         type=str,
-        help="directory to search for input event files"
+        help="directory to search for input event file, like from CatGT"
+    )
+    parser.add_argument(
+        "phy_root",
+        type=str,
+        help="directory to search for input spike times files, in Phy format"
     )
     parser.add_argument(
         "output_root",
         type=str,
-        help="directory to write adjusted event files, using same layout as INPUT_ROOT"
+        help="directory to write adjusted event and spike times files."
     )
     parser.add_argument(
         "--to-stream", "-t",
@@ -214,16 +222,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         default=None
     )
     parser.add_argument(
-        "--probe-id", "-p",
-        type=str,
-        help='Name of the recording and probe to do sorting for. (default: %(default)s)',
-        default="imec0"
-    )
-    parser.add_argument(
         "--phy-pattern", "-y",
         type=str,
-        help='Glob pattern for finding Phy params.py files. (default: %(default)s)',
-        default="./**/phy/params.py"
+        help='Glob pattern for finding Phy params.py file(s) within PHY_ROOT. (default: %(default)s)',
+        default="**/params.py"
+    )
+    parser.add_argument(
+        "--probe-id", "-p",
+        type=str,
+        help='Probe-specific filter for selecting one params.py among matches for PHY_PATTERN. (default: %(default)s)',
+        default="imec0"
     )
     parser.add_argument(
         "--offsets", "-o",
@@ -242,7 +250,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     try:
         return run_tprime(
-            cli_args.input_root,
+            cli_args.catgt_root,
+            cli_args.phy_root,
             cli_args.output_root,
             cli_args.to_stream,
             cli_args.from_streams,
