@@ -113,7 +113,7 @@ def run_tprime(
         phy_path = Path(phy_root).absolute()
         params_py = find_one(phy_pattern, probe_id, parent=phy_path)
         params_py_relative = params_py.relative_to(phy_path)
-        phy_output_path = Path(output_path, "phy", params_py_relative.parent)
+        phy_output_path = Path(output_path, params_py_relative.parent)
         logging.info(f"Writing converted spike times to {phy_output_path}")
         phy_output_path.mkdir(exist_ok=True, parents=True)
 
