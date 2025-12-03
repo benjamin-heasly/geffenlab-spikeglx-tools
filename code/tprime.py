@@ -190,7 +190,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument(
         "catgt_root",
         type=str,
-        help="directory to search for input event file, like from CatGT"
+        help="directory to search for input event text files, as from CatGT"
     )
     parser.add_argument(
         "phy_root",
@@ -233,12 +233,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         default="**/params.py"
     )
     parser.add_argument(
-        "--probe-id", "-p",
-        type=str,
-        help='Probe-specific filter for selecting one params.py among matches for PHY_PATTERN. (default: %(default)s)',
-        default="imec0"
-    )
-    parser.add_argument(
         "--offsets", "-o",
         type=str,
         help="Optional name of CatGT text file with offsets for multiple concatenated recordings. (default: %(default)s)",
@@ -252,6 +246,53 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
 
     cli_args = parser.parse_args(argv)
+
+    # Need to identify CatGT run dirs.
+    # Need to parse CatGT run dirs for run correlation key.
+    # CatGt uses <RUN_NAME>_g<GATE_INDEX>
+
+    # Need to identify phy-export block/probe/run dirs.
+    # Need to phy-export dirs for run correlation key.
+    # AIND uses somethign like block<BLOCK_INDEX>_<PROBE_NAME>.ap_recording<RECORDING_INDEX>
+
+    # Need to match CatGT and phy-export run dirs by key.
+    # I don't see an explicit link between the CatGT RUN_NAME and the AIND RECORDING_INDEX.
+    # Can we rummage in the metadata?
+    # AIND preprocessed subdir has job-specific parameters
+    # /vol/cortex/cd4/geffenlab/processed_data/BH/AS20-minimal3/03112025/sorted/preprocessed/block0_imec0.ap_recording1.json
+    # Deep in here there's a probes_info object with probe serial number like "serial_number": "22420019434"
+    # The JSON path is like kwargs/parent_recording/kwargs/recording/kwargs/parent_recording/kwargs/recording/kwargs/recording/kwargs/probes_info[0]/serial_number
+    # A nightmare, but could scan for each probes_info[any]/serial_number and come up with one or more correlation keys to associate with the file name.
+    # Then we'd know a fact like block0_imec0.ap_recording1 is for probe 22420019434
+
+    # In the CatGT raw data we have probe .meta files
+    # /vol/cortex/cd4/geffenlab/raw_data/BH/AS20-minimal3/03112025/ecephys/AS20_03112025_trainingSingle6Tone2024_Snk3.1_g0/AS20_03112025_trainingSingle6Tone2024_Snk3.1_g0_imec0/
+    # These have the same serial number, like imDatPrb_sn=22420019434
+    # To we could read this and know another fact like
+    # AS20_03112025_trainingSingle6Tone2024_Snk3.1_g0 is for probe 22420019434
+
+    # Shoot, this is actually insufficient, and only tells us what we already knew from imec0.
+    # Where does AIND pipeline record the actual .bin file that it processed?
+
+    # The session_name is always ecephys_session because of how the ephys dir is mounted into the capsule container.
+    # So this is dumb and not helpful.
+    # The job dispatch code is expecting only one session at at time (!) unless we specify --multi-session.
+    # Even with --multi-session, it still mounts in the data in the same ecephys_session/ subdir.
+    # Does the SpikeInterface se.get_neo_streams() find multiple run dirs (sessions or gates as separate "streams"?
+    # What if I copy the sample data and turn on --multi-session?
+    # This didn't work, job dispatch and the neo loader it crashed on a duplicate key error for (nidq, 0).
+    # This is bound to happen if there are multiple run dirs.
+    # So I think we're fucked when it comes to having multiple sessions "just work".
+
+    # Okay, so we can find the sessions and prompt the user to pick one, when there are multiple.
+    # At least then they don't have to type it in.
+    # From there we can store results in a folder per run?
+    # Then the multi-run logic for CatGT and TPrime can be a non-issue.
+
+    # Need to iterate pairs of corresponding run dirs.
+    # Need to match input and output files within each run dir.
+    # Need to allow multuple probe matches within each run dir.
+    # Need to write multiple output dirs, per block/probe/run, with names matching phy-export dirs.
 
     try:
         return run_tprime(

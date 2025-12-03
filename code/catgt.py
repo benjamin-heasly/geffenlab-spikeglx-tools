@@ -25,21 +25,19 @@ def set_up_logging():
     logging.info(f"CatGT version: {catgt_version}")
 
 
-def find_runs_and_gates(
+def find_run_and_gate(
     input_path: Path,
     run_gate_delimiter: str
 ) -> list[tuple[str, str]]:
-    """Scan the given input_path for subdirs named like <RUN_NAME>_g<GATE_INDEX>, collect pairs of (RUN_NAME, GATE_INDEX)."""
+    """Scan the given input_path as <RUN_NAME>_g<GATE_INDEX>, return the parsed (RUN_NAME, GATE_INDEX)."""
     logging.info(f"Searching input path: {input_path}")
-    subdir_names = [subdir.name for subdir in input_path.iterdir() if subdir.is_dir()]
-    logging.info(f"Found subdirs: {subdir_names}")
-
-    logging.info(f"Looking for names like: <RUN_NAME>{run_gate_delimiter}<GATE_INDEX>")
-    subdir_parts = [(name.partition(run_gate_delimiter), name) for name in subdir_names]
-    run_gate_subdirs = [(run, gate, name) for (run, delimiter, gate), name in subdir_parts if run and delimiter and gate]
-    run_gate_subdirs.sort()
-    logging.info(f"Found (RUN_NAME, GATE_INDEX, subdir): {run_gate_subdirs}")
-    return run_gate_subdirs
+    logging.info(f"Looking for <RUN_NAME>{run_gate_delimiter}<GATE_INDEX>")
+    run_name, delimiter, gate_index = input_path.name.partition(run_gate_delimiter)
+    if run_name and delimiter and gate_index:
+        logging.info(f"Found RUN_NAME {run_name}, GATE_INDEX {gate_index}).")
+        return (run_name, gate_index)
+    else:
+        raise ValueError(f"Could not parse <RUN_NAME>{run_gate_delimiter}<GATE_INDEX> from input path: {input_path.name}")
 
 
 def find_triggers_and_probes(
@@ -78,52 +76,49 @@ def run_catgt(
     runit_path: str,
     catgt_args: list[str]
 ):
-    run_gate_pairs = find_runs_and_gates(input_path, run_gate_delimiter)
-    for run_name, gate_index, subdir_name in run_gate_pairs:
-        logging.info(f"Processing run subdir: {subdir_name}")
-        logging.info(f"Using run {run_name} and gate {gate_index}.")
-        run_path = Path(input_path, subdir_name)
-        (triggers, probes) = find_triggers_and_probes(run_path, trigger_pattern, probe_pattern)
+    logging.info(f"Processing run dir: {input_path}")
 
-        triggers_arg = ",".join(triggers)
-        logging.info(f"Using triggers {triggers_arg}")
+    run_name, gate_index = find_run_and_gate(input_path, run_gate_delimiter)
+    logging.info(f"Using run name {run_name} and gate index {gate_index}.")
 
-        probes_arg = ",".join(probes)
-        logging.info(f"Using probes {probes_arg}")
+    (triggers, probes) = find_triggers_and_probes(input_path, trigger_pattern, probe_pattern)
+    triggers_arg = ",".join(triggers)
+    logging.info(f"Using triggers {triggers_arg}")
+    probes_arg = ",".join(probes)
+    logging.info(f"Using probes {probes_arg}")
 
-        catgt_command = [
-            runit_path,
-            f"-dest={output_path.absolute()}",
-            f"-dir={input_path.absolute()}",
-            f"-run={run_name}",
-            f"-g={gate_index}",
-            f"-t={triggers_arg}",
-            f"-prb={probes_arg}"
-        ] + catgt_args
+    catgt_command = [
+        runit_path,
+        f"-dest={output_path.absolute()}",
+        f"-dir={input_path.absolute()}",
+        f"-run={run_name}",
+        f"-g={gate_index}",
+        f"-t={triggers_arg}",
+        f"-prb={probes_arg}"
+    ] + catgt_args
 
-        logging.info(f"Running CatGT with command {catgt_command}")
+    logging.info(f"Running CatGT with command {catgt_command}")
 
-        # CatGT always writes to "CatGT.log", we can't choose the name.
-        # Clear any existing log, first.
-        catgt_log = Path(output_path, "CatGT.log")
-        if catgt_log.exists():
-            catgt_log.unlink()
+    # CatGT always writes to "CatGT.log", we can't choose the name.
+    # Clear any existing log, first.
+    catgt_log = Path(output_path, "CatGT.log")
+    if catgt_log.exists():
+        catgt_log.unlink()
 
-        result = subprocess.run(catgt_command, check=False, cwd=output_path)
+    # Run CatGT and read out the log from this run.
+    result = subprocess.run(catgt_command, check=False, cwd=output_path)
+    logging.info(f"Reading from CatGT log '{catgt_log}'")
+    with open(catgt_log, 'r') as log:
+        for line in log:
+            print(line)
 
-        # Read out CatGT.log from this run.
-        logging.info(f"Reading from CatGT log '{catgt_log}'")
-        with open(catgt_log, 'r') as log:
-            for line in log:
-                print(line)
+    # Copy CatGT.log to a run-specific file, for future reference.
+    catgt_log_for_subdir = Path(output_path, f"CatGT-{input_path.name}.log")
+    copy2(catgt_log, catgt_log_for_subdir)
 
-        # Copy CatGT.log to a run-specific file, for future reference.
-        catgt_log_for_subdir = Path(output_path, f"CatGT-{subdir_name}.log")
-        copy2(catgt_log, catgt_log_for_subdir)
-
-        logging.info(f"CatGT exited with result code {result.returncode}")
-        if result.returncode != 0:
-            raise ValueError(f"CatGT exited with nonxero result code {result.returncode}")
+    logging.info(f"CatGT exited with result code {result.returncode}")
+    if result.returncode != 0:
+        raise ValueError(f"CatGT exited with nonxero result code {result.returncode}")
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -133,7 +128,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument(
         "input_root",
         type=str,
-        help="Directory containing SpikeGLX run subdirs"
+        help="Directory containing a SpikeGLX run"
     )
     parser.add_argument(
         "output_root",
@@ -143,7 +138,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument(
         "--run-gate-delimiter",
         type=str,
-        help="Delimiter for partitioning subdir names of INPUT_ROOT into <RUN_NAME>RUN_GATE_DELIMITER<GATE_INDEX>.  (default: %(default)s)",
+        help="Delimiter for partitioning INPUT_ROOT into <RUN_NAME> and <GATE_INDEX>.  (default: %(default)s)",
         default="_g"
     )
     parser.add_argument(
