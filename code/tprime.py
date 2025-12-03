@@ -9,7 +9,8 @@ import subprocess
 
 import numpy as np
 
-from files import find_one
+from files import find, find_one
+
 
 tprime_version = environ.get("TPRIME_VERSION", "unknown/local")
 
@@ -81,8 +82,7 @@ def run_tprime(
     output_root: str,
     to_stream: str,
     from_streams: list[tuple[str, str]],
-    phy_from_stream: str,
-    probe_id: str,
+    phy_from_pattern: str,
     phy_pattern: str,
     sync_period: float,
     offsets_file: str,
@@ -107,20 +107,30 @@ def run_tprime(
     output_path = Path(output_root).absolute()
     output_path.mkdir(parents=True, exist_ok=True)
 
-    spike_times_seconds_adjusted = None
-    if phy_from_stream is not None:
-        # Locate Phy inputs and choose an output path with the same structure.
-        phy_path = Path(phy_root).absolute()
-        params_py = find_one(phy_pattern, probe_id, parent=phy_path)
+    # Locate CatGT results with sync events for each probe.
+    phy_path = Path(phy_root).absolute()
+    probe_mapping = {}
+    phy_from_matches = find(phy_from_pattern, parent=catgt_path)
+    phy_base_index = len(from_streams)
+    for probe_index, phy_from_path in enumerate(phy_from_matches):
+        logging.info(f"Converting spike times based on probe sync events: {phy_from_path}")
+
+        # Take the probe name from the end of the sync event parent dir name.
+        probe_parent_parts = phy_from_path.parent.name.split("_")
+        probe_name = probe_parent_parts[-1]
+        logging.info(f"Using probe name: {probe_name}")
+
+        # Locate a Phy subdir for this probe and choose an output path with the same structure.
+        params_py = find_one(phy_pattern, probe_name, parent=phy_path)
         params_py_relative = params_py.relative_to(phy_path)
         phy_output_path = Path(output_path, params_py_relative.parent)
-        logging.info(f"Writing converted spike times to {phy_output_path}")
+        logging.info(f"Writing converted spike times for probe {probe_name} to {phy_output_path}")
         phy_output_path.mkdir(exist_ok=True, parents=True)
 
         # Make a copy of the original spike_times.npy for reference.
         spike_times_npy = Path(params_py.parent, "spike_times.npy")
         spike_times_original = Path(phy_output_path, "spike_times_original.npy")
-        logging.info(f"Copying {spike_times_npy} to {spike_times_original}.")
+        logging.info(f"Copying {probe_name} spike times {spike_times_npy} to {spike_times_original}.")
         copy2(spike_times_npy, spike_times_original)
 
         # Convert Phy's spike times, in samples, to seconds for TPrime.
@@ -128,8 +138,7 @@ def run_tprime(
         phy_spike_times_to_seconds(params_py, spike_times_original, spike_times_seconds)
 
         # Which clock / time stream / sync events file do spike times come from?
-        phy_from_path = find_one(phy_from_stream, parent=catgt_path)
-        phy_index = len(from_streams)
+        phy_index = phy_base_index + probe_index
         from_stream_arg = f"-fromstream={phy_index},{phy_from_path.as_posix()}"
         tprime_command.append(from_stream_arg)
 
@@ -137,6 +146,9 @@ def run_tprime(
         spike_times_seconds_adjusted = Path(phy_output_path, "spike_times_sec_adj.npy")
         event_arg = f"-events={phy_index},{spike_times_seconds.as_posix()},{spike_times_seconds_adjusted.as_posix()}"
         tprime_command.append(event_arg)
+
+        # After TPrime runs, convert the adjuste spike times in seconds, back to units of samples for Phy.
+        probe_mapping[params_py] = spike_times_seconds_adjusted
 
     for index, (from_glob, events_glob) in enumerate(from_streams):
         # Which clock / time stream / sync events file do these events come from?
@@ -161,19 +173,18 @@ def run_tprime(
         for line in log:
             print(line)
 
-    if (result.returncode == 0 and spike_times_seconds_adjusted is not None) and spike_times_seconds_adjusted.exists():
-        # Write out the spike times adjusted by TPrime (in seconds) as sample numbers for Phy.
-        params_py = find_one(phy_pattern, probe_id, parent=phy_path)
-        spike_times_adj_npy = Path(spike_times_seconds_adjusted.parent, "spike_times_adj.npy")
-        phy_spike_times_to_samples(params_py, spike_times_seconds_adjusted, spike_times_adj_npy)
+    if result.returncode == 0:
+        for params_py, spike_times_seconds_adjusted in probe_mapping.items():
+            spike_times_adj_npy = Path(spike_times_seconds_adjusted.parent, "spike_times_adj.npy")
+            phy_spike_times_to_samples(params_py, spike_times_seconds_adjusted, spike_times_adj_npy)
 
-        # Make a full copy of the input phy/ dir, then replace its spike_times.npy with the adjusted spike_times_adj.npy.
-        logging.info(f"Copying contents of phy/ dir from {params_py.parent} to {spike_times_seconds_adjusted.parent}")
-        copytree(params_py.parent, spike_times_seconds_adjusted.parent, dirs_exist_ok=True)
+            # Make a full copy of the input phy/ dir, then replace its spike_times.npy with the adjusted spike_times_adj.npy.
+            logging.info(f"Copying contents of phy/ dir from {params_py.parent} to {spike_times_seconds_adjusted.parent}")
+            copytree(params_py.parent, spike_times_seconds_adjusted.parent, dirs_exist_ok=True)
 
-        spike_times_npy = Path(params_py.parent, "spike_times.npy")
-        logging.info(f"Replacing original spike times in {spike_times_npy} with adjusted {spike_times_adj_npy}")
-        copy2(spike_times_adj_npy, spike_times_npy)
+            spike_times_npy = Path(params_py.parent, "spike_times.npy")
+            logging.info(f"Replacing original spike times in {spike_times_npy} with adjusted {spike_times_adj_npy}")
+            copy2(spike_times_adj_npy, spike_times_npy)
 
     return result.returncode
 
@@ -217,14 +228,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "--from-streams", "-f",
         type=from_with_events,
         nargs="+",
-        help='one or more from:events pairs separated by spaces -- each "from" part is a glob to match one text or .npy file with sync event pulses for a source clock / time stream : each "events" part is a pattern for matching other event files, to be converted from the "from" clock to the TO_STREAM clock.  For example: --from-steams ./nidq/sync.txt:/nidq/**/*.txt ./foo/foo.txt:/foo/*.npy',
+        help='one or more from:events pairs separated by spaces -- each "from" part is a glob to match one text or .npy file with sync event pulses for a source clock / time stream : each "events" part is a pattern for matching other event files, to be converted from the "from" clock to the TO_STREAM clock.  These patterns are matched within CATGT_ROOT.  For example: --from-steams ./nidq/sync.txt:/nidq/**/*.txt ./foo/foo.txt:/foo/*.npy',
         default=[]
     )
     parser.add_argument(
-        "--phy-from-stream", "-F",
+        "--phy-from-pattern", "-F",
         type=str,
-        help="glob to match one text or .npy file with sync event pulses for the Phy spike times source clock / time stream (default None)",
-        default=None
+        help="glob to match text file(s) with probe(s) sync event pulses, within CATGT_ROOT (default None)",
+        default="**/*.ap.*.txt"
     )
     parser.add_argument(
         "--phy-pattern", "-y",
@@ -247,53 +258,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     cli_args = parser.parse_args(argv)
 
-    # Need to identify CatGT run dirs.
-    # Need to parse CatGT run dirs for run correlation key.
-    # CatGt uses <RUN_NAME>_g<GATE_INDEX>
-
-    # Need to identify phy-export block/probe/run dirs.
-    # Need to phy-export dirs for run correlation key.
-    # AIND uses somethign like block<BLOCK_INDEX>_<PROBE_NAME>.ap_recording<RECORDING_INDEX>
-
-    # Need to match CatGT and phy-export run dirs by key.
-    # I don't see an explicit link between the CatGT RUN_NAME and the AIND RECORDING_INDEX.
-    # Can we rummage in the metadata?
-    # AIND preprocessed subdir has job-specific parameters
-    # /vol/cortex/cd4/geffenlab/processed_data/BH/AS20-minimal3/03112025/sorted/preprocessed/block0_imec0.ap_recording1.json
-    # Deep in here there's a probes_info object with probe serial number like "serial_number": "22420019434"
-    # The JSON path is like kwargs/parent_recording/kwargs/recording/kwargs/parent_recording/kwargs/recording/kwargs/recording/kwargs/probes_info[0]/serial_number
-    # A nightmare, but could scan for each probes_info[any]/serial_number and come up with one or more correlation keys to associate with the file name.
-    # Then we'd know a fact like block0_imec0.ap_recording1 is for probe 22420019434
-
-    # In the CatGT raw data we have probe .meta files
-    # /vol/cortex/cd4/geffenlab/raw_data/BH/AS20-minimal3/03112025/ecephys/AS20_03112025_trainingSingle6Tone2024_Snk3.1_g0/AS20_03112025_trainingSingle6Tone2024_Snk3.1_g0_imec0/
-    # These have the same serial number, like imDatPrb_sn=22420019434
-    # To we could read this and know another fact like
-    # AS20_03112025_trainingSingle6Tone2024_Snk3.1_g0 is for probe 22420019434
-
-    # Shoot, this is actually insufficient, and only tells us what we already knew from imec0.
-    # Where does AIND pipeline record the actual .bin file that it processed?
-
-    # The session_name is always ecephys_session because of how the ephys dir is mounted into the capsule container.
-    # So this is dumb and not helpful.
-    # The job dispatch code is expecting only one session at at time (!) unless we specify --multi-session.
-    # Even with --multi-session, it still mounts in the data in the same ecephys_session/ subdir.
-    # Does the SpikeInterface se.get_neo_streams() find multiple run dirs (sessions or gates as separate "streams"?
-    # What if I copy the sample data and turn on --multi-session?
-    # This didn't work, job dispatch and the neo loader it crashed on a duplicate key error for (nidq, 0).
-    # This is bound to happen if there are multiple run dirs.
-    # So I think we're fucked when it comes to having multiple sessions "just work".
-
-    # Okay, so we can find the sessions and prompt the user to pick one, when there are multiple.
-    # At least then they don't have to type it in.
-    # From there we can store results in a folder per run?
-    # Then the multi-run logic for CatGT and TPrime can be a non-issue.
-
-    # Need to iterate pairs of corresponding run dirs.
-    # Need to match input and output files within each run dir.
-    # Need to allow multuple probe matches within each run dir.
-    # Need to write multiple output dirs, per block/probe/run, with names matching phy-export dirs.
-
     try:
         return run_tprime(
             cli_args.catgt_root,
@@ -301,8 +265,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             cli_args.output_root,
             cli_args.to_stream,
             cli_args.from_streams,
-            cli_args.phy_from_stream,
-            cli_args.probe_id,
+            cli_args.phy_from_pattern,
             cli_args.phy_pattern,
             cli_args.sync_period,
             cli_args.offsets,

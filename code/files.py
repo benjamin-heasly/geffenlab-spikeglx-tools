@@ -6,7 +6,7 @@ def find(
     glob: str,
     filter: str = "",
     parent: Path = None,
-) -> list:
+) -> list[Path]:
     """Search for a list of matches to the given glob pattern, optionally filtering results that contain the given filter."""
     if glob.startswith("/"):
         # Search from an absolute path.
