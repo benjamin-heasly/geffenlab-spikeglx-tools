@@ -90,7 +90,7 @@ def run_catgt(
     catgt_command = [
         runit_path,
         f"-dest={output_path.absolute()}",
-        f"-dir={input_path.absolute()}",
+        f"-dir={input_path.parent.absolute()}",
         f"-run={run_name}",
         f"-g={gate_index}",
         f"-t={triggers_arg}",
