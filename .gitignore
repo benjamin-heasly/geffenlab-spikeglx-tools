@@ -3,3 +3,5 @@ code/__pycache__
 results/
 
 .vscode
+
+.DS_Store
