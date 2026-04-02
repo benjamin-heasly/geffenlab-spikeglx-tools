@@ -1,212 +1,263 @@
-import numpy as np
-import os
+import sys
 from pathlib import Path
+import logging
+from argparse import ArgumentParser
+from typing import Optional, Sequence
 
-# Description:
-'''Batch process spike time mapping from OneBox to IMEC timebase for a recording session. Extracts treadmill data.'''
+import numpy as np
 
-def convert_spike_times_to_seconds(spike_times_path, metadata_path):
-    """Convert spike times from samples to seconds."""
-    spike_times = np.load(spike_times_path)
-    
-    with open(metadata_path, 'r') as file:
-        metadata = file.readlines()
-    
-    imSampRate = None
-    for line in metadata:
-        if line.startswith('imSampRate'):
-            imSampRate = float(line.split('=')[1].strip())
-            break
-    
-    if imSampRate is None:
-        raise Valueerror("Sample rate (imSampRate) not found in metadata file.")
-    
-    spike_times_seconds = spike_times / imSampRate
-    output_path = os.path.join(os.path.dirname(spike_times_path), 'spike_seconds.npy')
-    np.save(output_path, spike_times_seconds)
-    
-    print(f"Converted spike times saved to {output_path}")
-    return spike_times_seconds
+from files import find_one
 
-def map_events(fromstream_edges, tostream_edges, event_times):
-    """Map event times from OneBox to IMEC timebase."""
-    mapped_events = np.zeros_like(event_times)
-    
-    for i, event_time in enumerate(event_times):
-        idx = np.searchsorted(fromstream_edges, event_time, side='right') - 1
-        
-        if idx < 0 or idx >= len(tostream_edges):
-            mapped_events[i] = np.nan
-        else:
-            A_edge = fromstream_edges[idx]
-            B_edge = tostream_edges[idx]
-            mapped_events[i] = event_time - A_edge + B_edge
-    
-    return mapped_events
 
-def load_onebox_continuous_channel(obx_binary_path, channel_idx, metadata_path, num_channels=14):
-    """
-    Extract continuous analog data from OneBox binary file.
-    
-    Args:
-        obx_binary_path (str): Path to .obx.bin file
-        channel_idx (int): Channel to extract (0-13)
-        metadata_path (str): Path to .obx.meta file
-        num_channels (int): Total channels in file
-    
-    Returns:
-        tuple: (voltage_data, sample_rate)
-    """
-    
-    # Read metadata
-    with open(metadata_path, 'r') as f:
-        metadata = f.readlines()
-    
-    sample_rate = None
-    ai_range_max = None
-    ai_range_min = None
-    max_int = None
-    
-    for line in metadata:
-        if line.startswith('obSampRate='):
-            sample_rate = float(line.split('=')[1].strip())
-        elif line.startswith('obAiRangeMax='):
-            ai_range_max = float(line.split('=')[1].strip())
-        elif line.startswith('obAiRangeMin='):
-            ai_range_min = float(line.split('=')[1].strip())
-        elif line.startswith('obMaxInt='):
-            max_int = float(line.split('=')[1].strip())
-    
-    # Load binary data
-    data = np.fromfile(obx_binary_path, dtype=np.int16)
-    data = data.reshape(-1, num_channels)
-    
-    # Extract channel
-    channel_data = data[:, channel_idx].astype(np.float32)
-    
-    # Convert to voltage
-    voltage_range = ai_range_max - ai_range_min
-    voltage_data = (channel_data / max_int) * voltage_range + ai_range_min
-    
-    print(f"Loaded channel {channel_idx}: {len(voltage_data)} samples at {sample_rate} Hz")
-    
-    return voltage_data, sample_rate
-
-def process_session(base_dir, imec_probe='imec0'):
-    """
-    Process a single recording session.
-    
-    Args:
-        base_dir (str): Base directory (e.g., "D:\AD020\AD020_260128_g0")
-        imec_probe (str): IMEC probe name (default: 'imec0')
-    """
-    base_dir = Path(base_dir)
-    print(f"\n{'='*60}")
-    print(f"Processing: {base_dir.name}")
-    print(f"{'='*60}")
-    
-    # Construct paths
-    session_name = base_dir.name
-    imec_dir = base_dir / f"{session_name}_{imec_probe}"
-    kilosort_dir = imec_dir / "kilosort4"
-    catgt_dir = base_dir / f"catgt_{session_name}"
-    
-    # Check if required directories exist
-    if not kilosort_dir.exists():
-        print(f"error: kilosort4 directory not found at {kilosort_dir}")
-        return False
-    
-    if not catgt_dir.exists():
-        print(f"error: catgt directory not found at {catgt_dir}")
-        return False
-    
-    # Step 1: Convert spike times to seconds
-    print("\n Converting spike times to seconds...")
-    spike_times_path = kilosort_dir / "spike_times.npy"
-    metadata_path = imec_dir / f"{session_name}_t0.{imec_probe}.ap.meta"
-    
-    if not spike_times_path.exists():
-        print(f"error: spike_times.npy not found at {spike_times_path}")
-        return False
-    
-    if not metadata_path.exists():
-        print(f"error: metadata file not found at {metadata_path}")
-        return False
-    
-    spike_times_seconds = convert_spike_times_to_seconds(str(spike_times_path), str(metadata_path))
-    
-    # Step 2: Load sync data
-    print("\n Loading synchronization data...")
-    fromstream_edges_path = catgt_dir / f"{session_name}_tcat.obx0.obx.xd_13_6_500.txt"
-    tostream_edges_path = catgt_dir / f"{session_name}_imec0" / f"{session_name}_tcat.{imec_probe}.ap.xd_384_6_500.txt"
-    event_times_path = catgt_dir / f"{session_name}_tcat.obx0.obx.xa_0_0.txt"
-    
-    for path in [fromstream_edges_path, tostream_edges_path, event_times_path]:
-        if not path.exists():
-            print(f"error: Required file not found at {path}")
-            return False
-    
-    fromstream_edges = np.loadtxt(fromstream_edges_path)
-    tostream_edges = np.loadtxt(tostream_edges_path)
-    event_times = np.loadtxt(event_times_path)
-    
-    # Step 3: Map events
-    print("\n Mapping events and spikes...")
-    mapped_event_times = map_events(fromstream_edges, tostream_edges, event_times)
-    mapped_spike_times = map_events(fromstream_edges, tostream_edges, spike_times_seconds)
-    
-    # Step 4: Load and map treadmill data
-    print("\n Loading and mapping treadmill data...")
-    obx_binary_path = base_dir / f"{session_name}_t0.obx0.obx.bin"
-    obx_metadata_path = base_dir / f"{session_name}_t0.obx0.obx.meta"
-    
-    if not obx_binary_path.exists():
-        print(f"error: OneBox binary file not found at {obx_binary_path}")
-        return False
-    
-    if not obx_metadata_path.exists():
-        print(f"error: OneBox metadata file not found at {obx_metadata_path}")
-        return False
-    
-    treadmill_voltage, treadmill_sample_rate = load_onebox_continuous_channel(
-        str(obx_binary_path), 
-        channel_idx=7, 
-        metadata_path=str(obx_metadata_path)
+def set_up_logging():
+    logging.root.handlers = []
+    handlers = [
+        logging.StreamHandler(sys.stdout)
+    ]
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=handlers
     )
-    
-    # Create time array for treadmill
-    treadmill_times = np.arange(len(treadmill_voltage)) / treadmill_sample_rate
-    
-    # Map treadmill times to IMEC timebase
-    mapped_treadmill_times = map_events(fromstream_edges, tostream_edges, treadmill_times)
-    
-    print(f"Treadmill voltage range: {treadmill_voltage.min():.2f}V to {treadmill_voltage.max():.2f}V")
 
-    # Step 5: Save results
-    print("\n[Step 5] Saving results...")
-    output_dir = kilosort_dir
-    np.savetxt(output_dir / 'mapped_event_times.txt', mapped_event_times, fmt='%.6f', delimiter='\t')
-    np.save(output_dir / 'mapped_spike_times.npy', mapped_spike_times)
-    np.save(output_dir / 'treadmill_voltage.npy', treadmill_voltage)
-    np.savetxt(output_dir / 'mapped_treadmill_times.txt', mapped_treadmill_times, fmt='%.6f', delimiter='\t')
-    
-    print(f"Results saved to {output_dir}")
-    print(f"mapped_event_times.txt")
-    print(f"mapped_spike_times.npy")
-    print(f"treadmill_voltage.npy")
-    print(f"mapped_treadmill_times.txt")
-    
-    return True
-    
+
+def parse_meta(
+    meta_path: Path
+) -> dict[str, int|float|str]:
+    """Parse a SpikeGLX .meta file into a Python dict."""
+
+    meta_info = {}
+    with open(meta_path, 'r') as f:
+        for line in f:
+            line_parts = line.split("=", maxsplit=1)
+            key = line_parts[0].strip()
+            if len(line_parts) > 1:
+                raw_value = line_parts[1].strip()
+                try:
+                    value = int(raw_value)
+                except:
+                    try:
+                        value = float(raw_value)
+                    except:
+                        value = raw_value
+            else:
+                value = None
+            meta_info[key] = value
+    return meta_info
+
+
+def map_events(
+    from_events: np.ndarray,
+    from_sync: np.ndarray,
+    to_sync: np.ndarray,
+) -> np.ndarray:
+    """Map the event times in from_events from one time stream to another, based on corresponding sync event times in from_sync and to_sync."""
+
+    # For each from event, what was the nearest preceeding sync event on the same stream?
+    sync_indices = np.searchsorted(from_sync, from_events, side='right') - 1
+
+    # Any from events that came before the first sync event, use the first sync event.
+    sync_indices[sync_indices < 0] = 0
+
+    # Correct each from event based on pairs of corresponding sync events.
+    stream_corrections = to_sync[sync_indices] - from_sync[sync_indices]
+    to_events = from_events + stream_corrections
+
+    return to_events
+
+
+def load_voltages(
+    bin_path: Path,
+    channel_count: int,
+    channel_index: int,
+    raw_max: float,
+    voltage_max: float,
+    voltage_min: float,
+    raw_dtype = np.int16,
+    voltage_dtype = np.int32
+) -> np.ndarray:
+    """Load samples data from a raw .bin file, scale to voltages."""
+
+    # Load the raw data as one big array with shape (sample_count, channel_count).
+    # If this proves cumbersome, we could memmap a chunk at a time and write it out here.
+    raw_samples = np.fromfile(bin_path, dtype=raw_dtype)
+    raw_samples = raw_samples.reshape(-1, channel_count)
+
+    # Select one channel to convert to voltages.
+    raw_channel = raw_samples[:, channel_index].astype(voltage_dtype)
+    voltage_range = voltage_max - voltage_min
+    voltage_data = (raw_channel / raw_max) * voltage_range + voltage_min
+    return voltage_data
+
+
+def align_signal(
+    output_path: Path,
+    meta_pattern: str,
+    bin_pattern: str,
+    from_sync_pattern: str,
+    to_sync_pattern: str,
+    channel_count_meta_name: str,
+    voltage_max_meta_name: str,
+    voltage_min_meta_name: str,
+    raw_max_meta_name: str,
+    sample_rate_meta_name: str,
+    channel_index: int,
+    channel_name: str,
+):
+
+    meta_path = find_one(meta_pattern)
+    logging.info(f"Parsing metadata from .meta file: {meta_path}")
+    metadata = parse_meta(meta_path)
+    logging.info(f"Parsed metadata: {metadata}")
+
+    bin_path = find_one(bin_pattern)
+    logging.info(f"Loading voltages from .bin file: {bin_path}")
+    logging.info(f"Taking channel index {channel_index} from channel count {channel_count}.")
+    channel_count = metadata[channel_count_meta_name]
+    raw_max = metadata[raw_max_meta_name]
+    voltage_max = metadata[voltage_max_meta_name]
+    voltage_min = metadata[voltage_min_meta_name]
+    channel_voltages = load_voltages(
+        bin_path,
+        channel_count,
+        channel_index,
+        raw_max,
+        voltage_max,
+        voltage_min,
+    )
+    sample_count = len(channel_voltages)
+    logging.info(f"Loaded {sample_count} volatage samples ranging from {channel_voltages.min()} to {channel_voltages.max()}.")
+
+    sample_rate = metadata[sample_rate_meta_name]
+    raw_times = np.arange(sample_count) / sample_rate
+    logging.info(f"Using raw sample times at {sample_rate}Hz ranging from {raw_times.min()} to {raw_times.max()}")
+
+    from_sync_path = find_one(from_sync_pattern)
+    logging.info(f"Loading FROM sync events: {from_sync_path}")
+    from_sync = np.loadtxt(from_sync_path)
+    logging.info(f"Loaded {len(from_sync)} FROM sync events ranging from {from_sync.min()} to {from_sync.max()}")
+
+    to_sync_path = find_one(to_sync_pattern)
+    logging.info(f"Loading TO sync events: {to_sync_path}")
+    to_sync = np.loadtxt(to_sync_path)
+    logging.info(f"Loaded {len(to_sync_path)} TO sync events ranging from {to_sync_path.min()} to {to_sync_path.max()}")
+
+    aligned_times = map_events(
+        raw_times,
+        from_sync,
+        to_sync
+    )
+    logging.info(f"Aligned {len(aligned_times)} sample times ranging from {aligned_times.min()} to {aligned_times.max()}")
+
+    output_path.mkdir(exist_ok=True, parents=True)
+    voltage_out_name = Path(output_path, f"{channel_name}_voltage.npy")
+    logging.info(f"Writing {channel_name} channel voltages to: {voltage_out_name}")
+    np.save(voltage_out_name, channel_voltages)
+
+    times_out_name = Path(output_path, f"{channel_name}_times.txt")
+    logging.info(f"Writing {channel_name} channel times to: {times_out_name}")
+    np.savetxt(times_out_name, aligned_times, fmt='%.6f', delimiter='\t')
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    set_up_logging()
+
+    parser = ArgumentParser(description="Convert a continuous signal to voltage values and align samples times with sync events (similar to TPrime).")
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        help='Where to write voltage and aligned timestamp files. (default: %(default)s)',
+        default="output/"
+    )
+    parser.add_argument(
+        "--bin-pattern",
+        type=str,
+        help='Glob pattern for finding a raw binary file with a channel to convert and align. (default: %(default)s)',
+        default="*/*.bin"
+    )
+    parser.add_argument(
+        "--meta-pattern",
+        type=str,
+        help="Glob pattern for finding a SpikeGlx .meta file that describes the raw binary file from BIN_PATTERN. (default: %(default)s)",
+        default="*/*.meta"
+    )
+    parser.add_argument(
+        "--from-sync-pattern",
+        type=str,
+        help="Glob pattern for finding a text file of FROM stream sync event times, as from CatGT. (default: %(default)s)",
+        default="*/*xd_13_6_500.txt"
+    )
+    parser.add_argument(
+        "--to-sync-pattern",
+        type=str,
+        help="Glob pattern for finding a text file of TO stream sync event times, as from CatGT. (default: %(default)s)",
+        default="*/*/*imec0.ap.*.txt"
+    )
+    parser.add_argument(
+        "--channel-count-meta-name",
+        type=str,
+        help="Name of the channel count property within the meta file from META_PATTERN. (default: %(default)s)",
+        default="nSavedChans"
+    )
+    parser.add_argument(
+        "--voltage-max-meta-name",
+        type=str,
+        help="Name of the max voltage property within the meta file from META_PATTERN. (default: %(default)s)",
+        default="obAiRangeMax"
+    )
+    parser.add_argument(
+        "--voltage-min-meta-name",
+        type=str,
+        help="Name of the min voltage property within the meta file from META_PATTERN. (default: %(default)s)",
+        default="obAiRangeMin"
+    )
+    parser.add_argument(
+        "--raw-max-meta-name",
+        type=str,
+        help="Name of the max raw value property within the meta file from META_PATTERN. (default: %(default)s)",
+        default="obMaxInt"
+    )
+    parser.add_argument(
+        "--sample-rate-meta-name",
+        type=str,
+        help="Name of the sample rate property within the meta file from META_PATTERN. (default: %(default)s)",
+        default="obSampRate"
+    )
+    parser.add_argument(
+        "--channel-index",
+        type=int,
+        help="Index of which channel to read from the raw binary file from BIN_PATTERN. (default: %(default)s)",
+        default=7
+    )
+    parser.add_argument(
+        "--channel-name",
+        type=str,
+        help="Name to use for output data files with voltage and aligned sample times, for the data from CHANNEL_INDEX. (default: %(default)s)",
+        default="treadmill"
+    )
+
+    cli_args = parser.parse_args(argv)
+
+    try:
+        return align_signal(
+            cli_args.output_path,
+            cli_args.meta_pattern,
+            cli_args.bin_pattern,
+            cli_args.from_sync_pattern,
+            cli_args.to_sync_pattern,
+            cli_args.channel_count_meta_name,
+            cli_args.voltage_max_meta_name,
+            cli_args.voltage_min_meta_name,
+            cli_args.raw_max_meta_name,
+            cli_args.sample_rate_meta_name,
+            cli_args.channel_index,
+            cli_args.channel_name,
+        )
+    except:
+        logging.error("Error aligning continuous signal times.", exc_info=True)
+        return -1
+
+
 if __name__ == "__main__":
-    # Configuration
-    BASE_DIR = "D:\AD021\AD021_260219_g0"
-    IMEC_PROBE = "imec0"
-    
-    # Run processing
-    success = process_session(BASE_DIR, IMEC_PROBE)
-    
-    if success:
-        print("\n Spike time mapping completed successfully")
-    else:
-        print("\n Unable to find path or other error occurred")
+    exit_code = main(sys.argv[1:])
+    sys.exit(exit_code)
