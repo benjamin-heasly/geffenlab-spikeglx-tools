@@ -111,9 +111,9 @@ def align_signal(
     logging.info(f"Parsed metadata: {metadata}")
 
     bin_path = find_one(bin_pattern)
+    channel_count = metadata[channel_count_meta_name]
     logging.info(f"Loading voltages from .bin file: {bin_path}")
     logging.info(f"Taking channel index {channel_index} from channel count {channel_count}.")
-    channel_count = metadata[channel_count_meta_name]
     raw_max = metadata[raw_max_meta_name]
     voltage_max = metadata[voltage_max_meta_name]
     voltage_min = metadata[voltage_min_meta_name]
