@@ -140,7 +140,7 @@ def align_signal(
     to_sync_path = find_one(to_sync_pattern)
     logging.info(f"Loading TO sync events: {to_sync_path}")
     to_sync = np.loadtxt(to_sync_path)
-    logging.info(f"Loaded {len(to_sync_path)} TO sync events ranging from {to_sync_path.min()} to {to_sync_path.max()}")
+    logging.info(f"Loaded {len(to_sync)} TO sync events ranging from {to_sync.min()} to {to_sync.max()}")
 
     aligned_times = map_events(
         raw_times,
