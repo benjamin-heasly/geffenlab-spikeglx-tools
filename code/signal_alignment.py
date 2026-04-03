@@ -238,9 +238,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     cli_args = parser.parse_args(argv)
 
+    output_path = Path(cli_args.output_dir)
     try:
         return align_signal(
-            cli_args.output_path,
+            output_path,
             cli_args.meta_pattern,
             cli_args.bin_pattern,
             cli_args.from_sync_pattern,
