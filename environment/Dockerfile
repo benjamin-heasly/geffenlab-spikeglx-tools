@@ -37,4 +37,4 @@ RUN /opt/miniconda/bin/conda env create -f /opt/environment/environment.yml
 
 # Include all of our code/* in /opt/code
 COPY code /opt/code
-COPY code/conda_run /usr/local/bin/conda_run
+ENTRYPOINT ["/opt/miniconda/bin/conda", "run", "--no-capture-output", "-n", "spikeglx-tools", "python"]

@@ -76,49 +76,54 @@ def run_catgt(
     runit_path: str,
     catgt_args: list[str]
 ):
-    logging.info(f"Processing run dir: {input_path}")
+    logging.info(f"Processing recordings within: {input_path}")
+    run_dirs = [run_dir for run_dir in input_path.iterdir() if run_dir.is_dir()]
+    logging.info(f"Found {len(run_dirs)} run dirs: {run_dirs}")
+    if not run_dirs:
+        raise ValueError("Found no run dirs to process.")
 
-    run_name, gate_index = find_run_and_gate(input_path, run_gate_delimiter)
-    logging.info(f"Using run name {run_name} and gate index {gate_index}.")
+    for run_dir in run_dirs:
+        run_name, gate_index = find_run_and_gate(run_dir, run_gate_delimiter)
+        logging.info(f"Using run name {run_name} and gate index {gate_index}.")
 
-    (triggers, probes) = find_triggers_and_probes(input_path, trigger_pattern, probe_pattern)
-    triggers_arg = ",".join(triggers)
-    logging.info(f"Using triggers {triggers_arg}")
-    probes_arg = ",".join(probes)
-    logging.info(f"Using probes {probes_arg}")
+        (triggers, probes) = find_triggers_and_probes(run_dir, trigger_pattern, probe_pattern)
+        triggers_arg = ",".join(triggers)
+        logging.info(f"Using triggers {triggers_arg}")
+        probes_arg = ",".join(probes)
+        logging.info(f"Using probes {probes_arg}")
 
-    catgt_command = [
-        runit_path,
-        f"-dest={output_path.absolute()}",
-        f"-dir={input_path.parent.absolute()}",
-        f"-run={run_name}",
-        f"-g={gate_index}",
-        f"-t={triggers_arg}",
-        f"-prb={probes_arg}"
-    ] + catgt_args
+        catgt_command = [
+            runit_path,
+            f"-dest={output_path.absolute()}",
+            f"-dir={input_path.absolute()}",
+            f"-run={run_name}",
+            f"-g={gate_index}",
+            f"-t={triggers_arg}",
+            f"-prb={probes_arg}"
+        ] + catgt_args
 
-    logging.info(f"Running CatGT with command {catgt_command}")
+        logging.info(f"Running CatGT with command {catgt_command}")
 
-    # CatGT always writes to "CatGT.log", we can't choose the name.
-    # Clear any existing log, first.
-    catgt_log = Path(output_path, "CatGT.log")
-    if catgt_log.exists():
-        catgt_log.unlink()
+        # CatGT always writes to "CatGT.log", we can't choose the name.
+        # Clear any existing log, first.
+        catgt_log = Path(output_path, "CatGT.log")
+        if catgt_log.exists():
+            catgt_log.unlink()
 
-    # Run CatGT and read out the log from this run.
-    result = subprocess.run(catgt_command, check=False, cwd=output_path)
-    logging.info(f"Reading from CatGT log '{catgt_log}'")
-    with open(catgt_log, 'r') as log:
-        for line in log:
-            print(line)
+        # Run CatGT and read out the log from this run.
+        result = subprocess.run(catgt_command, check=False, cwd=output_path)
+        logging.info(f"Reading from CatGT log '{catgt_log}'")
+        with open(catgt_log, 'r') as log:
+            for line in log:
+                print(line)
 
-    # Copy CatGT.log to a run-specific file, for future reference.
-    catgt_log_for_subdir = Path(output_path, f"CatGT-{input_path.name}.log")
-    copy2(catgt_log, catgt_log_for_subdir)
+        # Copy CatGT.log to a run-specific file, for future reference.
+        catgt_log_for_subdir = Path(output_path, f"CatGT-{run_dir.name}.log")
+        copy2(catgt_log, catgt_log_for_subdir)
 
-    logging.info(f"CatGT exited with result code {result.returncode}")
-    if result.returncode != 0:
-        raise ValueError(f"CatGT exited with nonxero result code {result.returncode}")
+        logging.info(f"CatGT exited with result code {result.returncode}")
+        if result.returncode != 0:
+            raise ValueError(f"CatGT exited with nonxero result code {result.returncode}")
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -128,7 +133,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument(
         "input_root",
         type=str,
-        help="Directory containing a SpikeGLX run"
+        help="Directory containing one or more SpikeGLX run dirs."
     )
     parser.add_argument(
         "output_root",
