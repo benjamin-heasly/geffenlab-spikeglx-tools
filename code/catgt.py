@@ -186,6 +186,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         logging.error("Error running CatGT.", exc_info=True)
         return -1
 
+    return 0
 
 if __name__ == "__main__":
     exit_code = main(sys.argv[1:])

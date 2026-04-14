@@ -197,7 +197,7 @@ def find_runs_and_align(
     sync_period: float,
     offsets: str,
     runit: str,
-) -> int:
+):
     """Locate SpikeGlx/CatGT runs and corresponding sorting results, invoke TPrime for each run in sequence."""
 
     # Locate SpikeGlx runs as subfolders of the CATGT_ROOT.
