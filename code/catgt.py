@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 import re
 import subprocess
-from shutil import copy2
+from shutil import move
 
 
 catgt_version = environ.get("CATGT_VERSION", "unknown/local")
@@ -117,9 +117,10 @@ def run_catgt(
             for line in log:
                 print(line)
 
-        # Copy CatGT.log to a run-specific file, for future reference.
-        catgt_log_for_subdir = Path(output_path, f"CatGT-{run_dir.name}.log")
-        copy2(catgt_log, catgt_log_for_subdir)
+        # Move CatGT.log into the run-specific subdir.
+        catgt_log_in_subdir = Path(output_path, f"catgt_{run_dir.name}", "CatGT.log")
+        logging.info(f"Moving CatGT log into run subdir: {catgt_log_in_subdir}")
+        move(catgt_log, catgt_log_in_subdir)
 
         logging.info(f"CatGT exited with result code {result.returncode}")
         if result.returncode != 0:

@@ -176,7 +176,7 @@ def run_tprime(
             print(line)
 
     if result.returncode != 0:
-        raise ValueError(f"Error running TPrime, please see log above.")
+        raise ValueError(f"TPrime exited with nonxero result code {result.returncode}")
 
     for (probe_spikes_seconds_adjusted_path, probe_spikes_path, probe_params_path) in probe_seconds_to_convert:
         logging.info(f"Updating original spike times in place: {probe_spikes_path}")
