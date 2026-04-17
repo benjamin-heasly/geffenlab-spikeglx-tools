@@ -123,7 +123,7 @@ def align_signal(
         metadata = parse_meta(meta_path)
         logging.info(f"Parsed metadata: {metadata}")
 
-        data_run_path = Path(data_path, catgt_run_path.name)
+        data_run_path = Path(data_path, catgt_run_path.name.removeprefix("catgt_"))
         logging.info(f"Looking for binary data in run dir: {data_run_path}")
         bin_path = find_one(bin_pattern, parent=data_run_path)
         channel_count = metadata[channel_count_meta_name]
