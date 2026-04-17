@@ -91,6 +91,7 @@ def load_voltages(
 
 
 def align_signal(
+    data_path: Path,
     catgt_path: Path,
     output_path: Path,
     meta_pattern: str,
@@ -122,7 +123,9 @@ def align_signal(
         metadata = parse_meta(meta_path)
         logging.info(f"Parsed metadata: {metadata}")
 
-        bin_path = find_one(bin_pattern, parent=catgt_run_path)
+        data_run_path = Path(data_path, catgt_run_path.name)
+        logging.info(f"Looking for binary data in run dir: {data_run_path}")
+        bin_path = find_one(bin_pattern, parent=data_run_path)
         channel_count = metadata[channel_count_meta_name]
         logging.info(f"Loading voltages from .bin file: {bin_path}")
         logging.info(f"Taking channel index {channel_index} from channel count {channel_count}.")
@@ -177,6 +180,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     parser = ArgumentParser(description="Align continuous signal sample times to a destination clock.")
     parser.add_argument(
+        "data_root",
+        type=str,
+        help="directory with raw data from one or more runs"
+    )
+    parser.add_argument(
         "catgt_root",
         type=str,
         help="directory with CatGT outputs from one or more runs"
@@ -189,7 +197,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument(
         "--bin-pattern",
         type=str,
-        help='Glob pattern for finding a raw binary file with a channel to convert and align, within each run subdir of CATGT_ROOT. (default: %(default)s)',
+        help='Glob pattern for finding a raw binary file with a channel to convert and align, within each run subdir of DATA_ROOT. (default: %(default)s)',
         default="*.bin"
     )
     parser.add_argument(
@@ -255,10 +263,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     cli_args = parser.parse_args(argv)
 
+    data_path = Path(cli_args.data_root)
     catgt_path = Path(cli_args.catgt_root)
     output_path = Path(cli_args.output_root)
     try:
         align_signal(
+            data_path,
             catgt_path,
             output_path,
             cli_args.meta_pattern,
