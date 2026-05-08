@@ -114,9 +114,11 @@ def run_tprime(
     tprime_command.append(aux_from_arg)
 
     # Tell TPrime which auxiliary events to convert, and where.
+    events_output_paths = []
     for events_path in events_paths:
         events_relative_path = events_path.relative_to(catgt_run_path)
         events_output_path = Path(output_run_path, events_relative_path)
+        events_output_paths.append(events_output_path)
         events_output_path.parent.mkdir(parents=True, exist_ok=True)
         aux_events_arg = f"-events={stream_index},{events_path.as_posix()},{events_output_path.as_posix()}"
         tprime_command.append(aux_events_arg)
@@ -160,7 +162,7 @@ def run_tprime(
         tprime_command.append(probe_from_arg)
 
         # Tell TPrime which spike times to convert, and where.
-        probe_spikes_seconds_adjusted_path = Path(probe_run_output_path, "spike_times_sec_adjusted.npy")
+        probe_spikes_seconds_adjusted_path = Path(probe_run_output_path, "spike_times_sec_adj.npy")
         probe_events_arg = f"-events={stream_index},{probe_spikes_seconds_path.as_posix()},{probe_spikes_seconds_adjusted_path.as_posix()}"
         tprime_command.append(probe_events_arg)
 
@@ -178,9 +180,23 @@ def run_tprime(
     if result.returncode != 0:
         raise ValueError(f"TPrime exited with nonxero result code {result.returncode}")
 
+    # Copy adjusted spike and event times into each probe's Phy subdir.
     for (probe_spikes_seconds_adjusted_path, probe_spikes_path, probe_params_path) in probe_seconds_to_convert:
         logging.info(f"Updating original spike times in place: {probe_spikes_path}")
         phy_spike_times_to_samples(probe_params_path, probe_spikes_seconds_adjusted_path, probe_spikes_path)
+
+        probe_phy_dir = probe_params_path.parent
+        convenience_spikes_seconds_adjusted_path = Path(probe_phy_dir, probe_spikes_seconds_adjusted_path.name)
+        logging.info(f"Copying spike times in seconds, for convenience: {probe_spikes_path}")
+        copy2(probe_spikes_seconds_adjusted_path, convenience_spikes_seconds_adjusted_path)
+
+        logging.info(f"Copying {len(events_output_paths)}: {probe_phy_dir}")
+        for events_output_path in events_output_paths:
+            # Take the last part of the event file name.
+            # For example from "AS20_03112025_trainingSingle6Tone2024_Snk3.1_g0_tcat.nidq.xd_8_3_0.txt", take "events-xd_8_3_0.txt".
+            events_short_name = events_output_path.stem.rsplit('.')[-1]
+            convenience_events_output_path = Path(probe_phy_dir, f"events_{events_short_name}{events_output_path.suffix}")
+            copy2(events_output_path, convenience_events_output_path)
 
 
 def find_runs_and_align(
