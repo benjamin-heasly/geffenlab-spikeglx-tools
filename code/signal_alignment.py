@@ -53,14 +53,20 @@ def map_events(
 ) -> np.ndarray:
     """Map the event times in from_events from one time stream to another, based on corresponding sync event times in from_sync and to_sync."""
 
+    # Arrays from_sync and to_sync should have the same number of elements, but might be off by ~1.
+    # Use a common subrange from both arrays.
+    common_length = min(len(from_sync), len(to_sync))
+    from_sync_common = from_sync[:common_length]
+    to_sync_common = to_sync[:common_length]
+
     # For each from event, what was the nearest preceeding sync event on the same stream?
-    sync_indices = np.searchsorted(from_sync, from_events, side='right') - 1
+    sync_indices = np.searchsorted(from_sync_common, from_events, side='right') - 1
 
     # Any from events that came before the first sync event, use the first sync event.
     sync_indices[sync_indices < 0] = 0
 
     # Correct each from event based on pairs of corresponding sync events.
-    stream_corrections = to_sync[sync_indices] - from_sync[sync_indices]
+    stream_corrections = to_sync_common[sync_indices] - from_sync_common[sync_indices]
     to_events = from_events + stream_corrections
 
     return to_events
